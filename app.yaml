@@ -1,9 +1,3 @@
-name: Gambit-Goblins
-
-description: ""
-
-icon: ♟️
-
-ports:[]
-
-bricks: []
+name: Chess Robot
+description: Chess robot controller
+version: 1.0.0
