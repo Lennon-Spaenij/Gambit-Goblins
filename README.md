@@ -14,8 +14,5 @@ The **Gambit Goblins** combines computer science with some parts of engineering 
 * **Hardware:** Arduino Uno Q, ---More will be added---
 * **Design** SCARA 3D-printed chassis, Fritzing
 
-<<<<<<< HEAD
 
 This line is for testing the github through arduino Q
-=======
->>>>>>> 420518f78b38407a9e3d429ea1c9a3be4bf52bb1
