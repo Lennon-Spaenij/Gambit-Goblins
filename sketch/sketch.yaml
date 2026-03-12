@@ -1,0 +1,10 @@
+default_profile: uno_q
+
+profiles:
+  uno_q:
+    fqbn: arduino:renesas_uno:unor4qwiic
+    platforms:
+      - platform: arduino:renesas_uno
+        version: latest
+    libraries:
+      - name: LiquidCrystal I2C
