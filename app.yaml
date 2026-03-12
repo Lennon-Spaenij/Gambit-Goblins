@@ -1,3 +1,5 @@
 name: Chess Robot
 description: Chess robot controller
-version: 1.0.0
+ports: []
+bricks: []
+icon: ♟️
