@@ -1,0 +1,6 @@
+default_profile: default
+
+profiles:
+  default:
+    fqbn: arduino:renesas_uno:unor4qwiic
+    platform: arduino:renesas_uno
