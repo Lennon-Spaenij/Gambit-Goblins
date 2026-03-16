@@ -1,64 +1,121 @@
-#include <Wire.h>
-#include <LiquidCrystal_I2C.h>
 
-// Set address to 0x27 (standard) or 0x3F
-LiquidCrystal_I2C lcd(0x27, 20, 4); 
+// example for Arduino LCD library
 
-unsigned long startTime;
-int counter = 0;
+#include "Arduino.h"
+#include <LCDi2c.h>
+
+#define LCD_ROWS    4
+#define LCD_COLUMNS 20
+
+// special chars
+uint8_t upArrow[8] = {  
+    0b00100,
+    0b01010,
+    0b10001,
+    0b00100,
+    0b00100,
+    0b00100,
+    0b00000,
+    };
+
+uint8_t downArrow[8] = {
+    0b00000,
+    0b00100,
+    0b00100,
+    0b00100,
+    0b10001,
+    0b01010,
+    0b00100,
+    };
+
+uint8_t rightArrow[8] = {
+    0b00000,
+    0b00100,
+    0b00010,
+    0b11001,
+    0b00010,
+    0b00100,
+    0b00000,
+    };
+
+uint8_t leftArrow[8] = {
+    0b00000,
+    0b00100,
+    0b01000,
+    0b10011,
+    0b01000,
+    0b00100,
+    0b00000,
+    };
+
+float data = 0.1f;
+
+LCDi2c lcd(0x27, Wire);
 
 void setup() {
-  startTime = millis(); // Start timing immediately for Test 1
-  
-  Serial.begin(9600);
-  // Note: Uno Q serial might be slow to connect, but code runs immediately
-  
-  // Initialize I2C - High speed (400kHz) is better for <200ms boot, 
-  // but 100kHz is safer for CNC shield noise. Let's use standard:
-  Wire.begin();
-  Wire.setClock(100000); 
-  
-  // Initialize LCD
-  lcd.init();
-  lcd.backlight();
-
-  // Test 1: Power-up & basic text (<200ms requirement)
-  unsigned long bootTime = millis() - startTime;
-  lcd.setCursor(0, 0);
-  lcd.print("Hello World "); 
-  lcd.print(bootTime);
-  lcd.print("ms");
-
-  // Test 2: All 4 lines
-  lcd.setCursor(0, 1); lcd.print("Line 1: OK");
-  lcd.setCursor(0, 2); lcd.print("Line 2: OK");
-  lcd.setCursor(0, 3); lcd.print("Line 3: OK");
-
-  // Test 3: Edge characters (Column 19 markers)
-  for(int i = 0; i < 4; i++) {
-    lcd.setCursor(19, i);
-    lcd.print("*");
-  }
-
-  // Serial Logging
-  Serial.println("--- Acceptance Test Data ---");
-  Serial.print("Boot Time: "); Serial.print(bootTime); Serial.println("ms (Target <200ms)");
-  Serial.println("Lines 0-3: Written");
-  Serial.println("Col 19: Marked with *");
-}
+    lcd.begin(LCD_ROWS, LCD_COLUMNS);
+    lcd.create(0, downArrow);
+    lcd.create(1, upArrow);
+    lcd.create(2, rightArrow);
+    lcd.create(3, leftArrow);
+    }
 
 void loop() {
-  // Test 4: Dynamic updates (500ms counter, no flicker)
-  lcd.setCursor(12, 3);
-  lcd.print("C:");
-  if (counter < 10) lcd.print("0"); // Padding for stability
-  lcd.print(counter);
+    lcd.cls();
+    lcd.printf("hello world %f", data);
+    // print user chars
+    lcd.character(2, 1, 0);
+    lcd.character(2, 3, 1);
+    lcd.character(2, 5, 2);
+    lcd.character(2, 7, 3);
 
-  Serial.print("Dynamic Counter: ");
-  Serial.println(counter);
+    delay(1000);
+    lcd.display(DISPLAY_OFF);
+    delay(1000);
+    lcd.display(DISPLAY_ON);
+    delay(1000);
+    lcd.display(BACKLIGHT_OFF);
+    delay(1000);
+    lcd.display(BACKLIGHT_ON);
+    delay(1000);
+    lcd.display(CURSOR_ON);
+    delay(1000);
+    lcd.display(BLINK_ON);
+    delay(1000);
+    lcd.display(BLINK_OFF);
+    delay(1000);
+    lcd.display(CURSOR_OFF);
+    delay(1000);
+    // scroll 16 positions to the right
+    for (uint8_t pos = 0; pos < 16; pos++) {
+        lcd.display(SCROLL_RIGHT); // scroll one position to right
+        delay(500); // step time
+        }
+    // scroll 16 positions to the left
+    for (uint8_t pos = 0; pos < 16; pos++) {
+        lcd.display(SCROLL_LEFT); // scroll one position to left
+        delay(500); // step time
+        }
+    delay(500);
+    lcd.cls();
+    lcd.locate(1, 1);
+    lcd.printf("hello line 1");
+    delay(500);
+    lcd.locate(2, 1);
+    lcd.printf("hello line 2");
+    delay(500);
+    // clear parts
+    lcd.clp(1, 1, 3);
+    delay(500);
+    lcd.clp(2, 4, 3);
+    delay(500);
+    lcd.clp(1, 6, 3);
+    delay(500);
+    lcd.clp(2, 10, 3);
+    delay(500);
+    lcd.clr(1);
+    delay(500);
+    lcd.clr(2);
+    delay(500);
+    }
 
-  counter++;
-  if(counter > 99) counter = 0; // Reset for visual stability
-  
-  delay(500); // Test 4 timing requirement
-}
