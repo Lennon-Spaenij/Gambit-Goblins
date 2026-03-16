@@ -2,8 +2,8 @@
 #define Gripper 11 
 
 #define SERVO_INTERVAL 20
-#define GRIPPER_OPEN 900
-#define GRIPPER_CLOSED 1700
+#define GRIPPER_OPEN 400
+#define GRIPPER_CLOSED 1300
 #define GRIPPER_HOLD_TIME_CLOSED 2000  // 2 seconds closed
 #define GRIPPER_HOLD_TIME_OPEN 2000    // 2 second open
 
