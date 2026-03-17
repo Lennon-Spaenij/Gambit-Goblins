@@ -12,6 +12,9 @@ engine = chess.engine.SimpleEngine.popen_uci(stockfish_path)
 # FEN
 current_fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 
+def get_board_state():
+    print("Put the camera code here")
+
 def fen_to_uci(fen_camera):
     global current_fen
     new_fen = fen_camera
@@ -30,13 +33,12 @@ def fen_to_uci(fen_camera):
     print("No valid move detected from FEN")
     return None
 
-        
-
 def human_move(uci_move):
     # Get the uci from the picture to tell the engine what move has been made
     try:
         move = board.parse_uci(uci_move) # UCI like 'g1f3' Knight to f3
         board.push(move)
+        return True
     except:
         print("Invalid move")
         return False
@@ -51,8 +53,20 @@ def robot_move():
 
 def main_game_loop():
     while not board.is_game_over():
-        if board.turn == chess.WHITE:
-    
+        # 1: Get camera FEN
+        camera_fen = get_board_state()
 
-        print("Game over:", board.result())
-        engine.quit()
+        # 2: Make the fen into UCI
+        human_uci = fen_to_uci(camera_fen)
+
+        # 3: 
+        robot_uci = robot_move()
+
+        # 4: Give the UCI to the 'arm' so it can move to the right coords
+
+
+    print("Game over:", board.result())
+    engine.quit()
+
+if __name__ == '__main__':
+    main_game_loop()
