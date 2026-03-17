@@ -122,12 +122,8 @@ def capture_and_analyze():
         # 3. Analyze squares
         occupancy, annotated = analyze_occupancy(warped)
         
-        # Output side-by-side
-        res_original = cv2.resize(frame, (320, 320))
-        res_warped = cv2.resize(annotated, (320, 320))
-        combined = np.hstack((res_original, res_warped))
         
-        _, buffer = cv2.imencode('.jpg', combined)
+        _, buffer = cv2.imencode('.jpg', annotated)
         return {
             "status": "success",
             "message": f"Board Captured! Detected {np.sum(occupancy)} pieces.",
