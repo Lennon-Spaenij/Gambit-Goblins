@@ -58,12 +58,13 @@ def main_game_loop():
 
         # 2: Make the fen into UCI
         human_uci = fen_to_uci(camera_fen)
+        if human_uci and human_move(human_uci):
+            # 3: stockfishes reply
+            robot_uci = robot_move()
 
-        # 3: 
-        robot_uci = robot_move()
-
-        # 4: Give the UCI to the 'arm' so it can move to the right coords
-
+            # 4: Give the UCI to the 'arm' so it can move to the right coords
+        else:
+            print("Waiting for valid move")
 
     print("Game over:", board.result())
     engine.quit()
