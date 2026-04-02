@@ -10,7 +10,7 @@ from arduino.app_utils import App, Bridge
 
 print("main.py started")
 
-SKILL_LEVEL = 10
+SKILL_LEVEL = 20
 ENGINE_PATH_CANDIDATES = [
     os.environ.get("STOCKFISH_PATH", ""),
     "/usr/games/stockfish",
@@ -38,6 +38,8 @@ MAX_CAPTURE_CHANGED_SQUARES = 8
 MOVE_SCORE_MIN = 1.35
 CAPTURE_MOVE_SCORE_MIN = 1.15
 CAPTURE_TO_RATIO_FLOOR = 0.08
+CAPTURE_SOURCE_BONUS = 0.45
+QUIET_FROM_CAPTURE_SOURCE_PENALTY = 0.5
 BOARD_ROTATION = None
 ROTATION_CANDIDATES = [
     ("none", None),
@@ -547,7 +549,7 @@ def score_move_candidate(move, changed_squares, ratios):
     score = iou * 1.8 + from_ratio * from_weight + to_ratio * to_weight
 
     if is_capture:
-        score += 0.2
+        score += 0.2 + CAPTURE_SOURCE_BONUS * min(from_ratio, 0.6)
         if to_ratio >= CAPTURE_TO_RATIO_FLOOR:
             score += 0.2
         else:
@@ -597,8 +599,20 @@ def detect_move(diff_img):
         return None, f"Too many squares changed: {names}", changed_squares, ratios
 
     scored_moves = []
+    capture_sources = set()
     for move in board.legal_moves:
+        if board.is_capture(move):
+            capture_sources.add(move.from_square)
         scored_moves.append(score_move_candidate(move, changed_squares, ratios))
+
+    for candidate in scored_moves:
+        if candidate["is_capture"]:
+            continue
+        if candidate["move"].from_square in capture_sources:
+            candidate["score"] = round(
+                candidate["score"] - QUIET_FROM_CAPTURE_SOURCE_PENALTY * min(candidate["from_ratio"], 0.8),
+                3,
+            )
 
     if not scored_moves:
         debug_log("No legal moves available while trying to detect move.")
