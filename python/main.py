@@ -57,6 +57,11 @@ last_stable_gray = None
 square_occ_thresholds = {}
 camera_status = "Camera setup not started."
 board_rotation = BOARD_ROTATION
+DIFFICULTY_MAP = {
+    "easy":   5,
+    "hard":   15,
+    "expert": 20,
+}
 
 
 def set_camera_status(message: str) -> None:
@@ -664,6 +669,14 @@ def detect_move(diff_img):
         ), changed_squares, ratios
     return best_move, board.san(best_move), changed_squares, ratios
 
+def set_difficulty(level: str) -> bool:
+    global SKILL_LEVEL
+    skill = DIFFICULTY_MAP.get(level, 15)
+    SKILL_LEVEL = skill
+    if engine is not None:
+        engine.configure({"Skill Level": skill})
+    print(f"[PYTHON]: Difficulty set to {level} (Skill Level {skill})")
+    return True
 
 def uci_to_piece_type(square_str: str) -> int:
     square = chess.parse_square(square_str)
@@ -955,6 +968,7 @@ Bridge.provide("camera_capture_initial", camera_capture_initial)
 Bridge.provide("camera_capture_player_move", camera_capture_player_move)
 Bridge.provide("camera_refresh_reference", camera_refresh_reference)
 Bridge.provide("get_camera_status", get_camera_status)
+Bridge.provide("set_difficulty", set_difficulty)
 
 if initialize_engine():
     print("[PYTHON]: Chess and vision bridge ready")

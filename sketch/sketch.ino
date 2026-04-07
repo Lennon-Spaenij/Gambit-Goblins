@@ -1,7 +1,9 @@
+#include <AccelStepper.h>
+#include <Servo.h>
 #include <Arduino_RouterBridge.h>
 #include <LCDi2c.h>
 
-// Stepper Motor Pins
+// --- Pins ---
 #define X_STEP 2
 #define X_DIR 5
 #define Y_STEP 3
@@ -9,634 +11,591 @@
 #define Z_STEP 4
 #define Z_DIR 7
 #define ENABLE 8
-
-// Button Pins
 #define BUTTON_UP 11
 #define BUTTON_OK 10
 #define BUTTON_DOWN 9
+#define GRIPPER_PIN 12
 
-// Gripper
-#define Gripper 12
-#define SERVO_INTERVAL 20
-#define GRIPPER_OPEN 400
-#define GRIPPER_CLOSED 1200
+// --- Motion & Gripper Constants ---
+#define GRIPPER_OPEN 25
+#define GRIPPER_CLOSED 60
+#define Z_TRAVEL_POS 0
+#define X_MAX_SPEED 25000.0
+#define X_ACCEL 10000.0
+#define Y_MAX_SPEED 30000.0
+#define Y_ACCEL 12000.0
+#define Z_MAX_SPEED 35000.0
+#define Z_ACCEL 15000.0
 
-// Stepper Settings
-#define STEPS_PER_REV 3200
-#define STEP_DELAY 100
+// --- Objects ---
+AccelStepper stepperX(AccelStepper::DRIVER, X_STEP, X_DIR);
+AccelStepper stepperY(AccelStepper::DRIVER, Y_STEP, Y_DIR);
+AccelStepper stepperZ(AccelStepper::DRIVER, Z_STEP, Z_DIR);
+Servo gripperServo;
+LCDi2c lcd(0x27, Wire);
 
-// LCD Settings
-#define LCD_ROWS 4
-#define LCD_COLUMNS 20
-
-// Menu States
+// --- Game/Menu State ---
 enum MenuState {
-  MENU_START,
-  MENU_CONFIRM_START,
-  MENU_GAME,
-  MENU_CONFIRM_RESIGN
+    MENU_SETUP_CALIBRATE,
+    MENU_SETUP_VERIFY,
+    MENU_SETUP_CAPTURE,
+    MENU_START,
+    MENU_CONFIRM_START,
+    MENU_GAME,
+    MENU_CONFIRM_RESIGN
 };
 
-// Game States
-MenuState currentMenu = MENU_START;
+MenuState currentMenu = MENU_SETUP_CALIBRATE;
 bool robotTurn = false;
 bool gameActive = false;
+int menuSelection = 0;
+String robotNextMove = "----";
+String statusMessage = "";
+unsigned long statusMessageUntil = 0;
 
-// Menu Navigation
-int menuSelection = 0; // 0 = Yes/Start Game, 1 = No
+#define STARTING_TIME 1800000
+unsigned long playerStartTime, robotStartTime, playerElapsedTime, robotElapsedTime;
+unsigned long playerPauseTime, robotPauseTime, lastDisplayUpdate;
+const unsigned long DISPLAY_UPDATE_INTERVAL = 100;
+const unsigned long STATUS_MESSAGE_MS = 3000;
 
-// Button State Variables (non-blocking debounce)
-bool buttonUpState = false;
-bool buttonOkState = false;
-bool buttonDownState = false;
-bool buttonUpLastState = false;
-bool buttonOkLastState = false;
-bool buttonDownLastState = false;
-unsigned long buttonUpDebounceTime = 0;
-unsigned long buttonOkDebounceTime = 0;
-unsigned long buttonDownDebounceTime = 0;
-unsigned long buttonOkPressStart = 0;
-const unsigned long DEBOUNCE_DELAY = 50;
-const unsigned long LONG_PRESS_TIME = 3000;
-
-// Timer Variables
-#define STARTING_TIME 1800000  // 30 minutes in milliseconds (30 * 60 * 1000)
-unsigned long playerStartTime = 0;
-unsigned long robotStartTime = 0;
-unsigned long playerElapsedTime = 0;
-unsigned long robotElapsedTime = 0;
-unsigned long playerPauseTime = 0;
-unsigned long robotPauseTime = 0;
-
-// Score Variables
 int playerScore = 0;
 int robotScore = 0;
 
-// Move Display
-String robotNextMove = "e2e4";
-String playerLastMove = "----";
+bool buttonUpState, buttonOkState, buttonDownState;
+bool buttonUpLastState, buttonOkLastState, buttonDownLastState;
+unsigned long buttonUpDebounceTime, buttonOkDebounceTime, buttonDownDebounceTime, buttonOkPressStart, buttonDownPressStart;
+const unsigned long DEBOUNCE_DELAY = 50, LONG_PRESS_TIME = 3000;
 
-// Display Update Control
-unsigned long lastDisplayUpdate = 0;
-const unsigned long DISPLAY_UPDATE_INTERVAL = 100;
+struct Pos { long x; long y; };
+const Pos squareTable[8][8] = {
+    /* A */ { {-4600L,-21250L}, {-4220L,-20500L}, {-4010L,-19770L}, {-3960L,-18980L}, {-4030L,-18140L}, {-4210L,-17200L}, {-4550L,-16030L}, {-5440L,-13700L} },
+    /* B */ { {-4040L,-21540L}, {-3610L,-20660L}, {-3430L,-19840L}, {-3430L,-19040L}, {-3530L,-18230L}, {-3760L,-17320L}, {-4070L,-16230L}, {-4660L,-14670L} },
+    /* C */ { {-3170L,-21530L}, {-2800L,-20590L}, {-2730L,-19750L}, {-2830L,-18960L}, {-3030L,-18180L}, {-3290L,-17320L}, {-3650L,-16300L}, {-4200L,-14940L} },
+    /* D */ { {-1500L,-20800L}, {-1750L,-20040L}, {-1990L,-19350L}, {-2250L,-18650L}, {-2540L,-17930L}, {-2880L,-17130L}, {-3720L,-16170L}, {-3820L,-14930L} },
+    /* E */ { {-7530L, -4610L}, {-7420L, -5370L}, {-7210L, -6090L}, {-6940L, -6800L}, {-6640L, -7500L}, {-6310L, -8320L}, {-5910L, -9240L}, {-5410L,-10430L} },
+    /* F */ { {-6110L, -4070L}, {-6430L, -4960L}, {-6480L, -5770L}, {-6360L, -6560L}, {-6160L, -7340L}, {-5890L, -8180L}, {-5540L, -9150L}, {-5030L,-10420L} },
+    /* G */ { {-5170L, -4010L}, {-5590L, -4840L}, {-5760L, -5640L}, {-5760L, -6430L}, {-5650L, -7250L}, {-5430L, -8120L}, {-5100L, -9210L}, {-4550L,-10690L} },
+    /* H */ { {-4570L, -4310L}, {-4940L, -5040L}, {-5140L, -5750L}, {-5200L, -6530L}, {-5120L, -7380L}, {-4950L, -8300L}, {-4630L, -9410L}, {-3660L,-11940L} },
+};
+const Pos HOME = {0L, 0L}, SAFE_POS = {-1000L, -6200L}, PIECE_PLACE = { -4010L, -7770L };
 
-// Gripper State
-bool gripper_closed = false;
+struct Piece { int id; long pickupHeight; long placeHeight; };
+Piece pieces[] = { {0,0,0}, {1,38000,37500}, {2,38000,37500}, {3,36400,35900}, {4,36400,35900}, {5,34000,33500}, {6,34000,33500} };
 
-// LCD Object
-LCDi2c lcd(0x27, Wire);
+void setStatusMessage(const String& message) {
+    statusMessage = message;
+    statusMessageUntil = millis() + STATUS_MESSAGE_MS;
+    Serial.println(message);
+}
 
-// Function Declarations
-void gripper(int pulse);
-void CloseGripper();
-void OpenGripper();
-void set_gripper(int state);
-void readButtons();
-bool buttonUpPressed();
-bool buttonDownPressed();
-bool buttonOkPressed();
-bool buttonOkLongPress();
-void handleStartMenu();
-void handleConfirmStartMenu();
-void handleGameScreen();
-void checkForResignHold();
-void handleConfirmResignMenu();
-void startGame();
-void endGame();
-void toggleTurn();
-void updateTimers();
-void pauseTimers();
-void resumeTimers();
-unsigned long getPlayerTime();
-unsigned long getRobotTime();
-void displayStartMenu();
-void displayConfirmStartMenu();
-void displayGameScreen();
-void displayConfirmResignMenu();
-void updateDisplay();
-void formatTime(unsigned long milliseconds);
+String shortenMessage(String message) {
+    message.replace("success:", "");
+    message.replace("fail:", "");
+    message.replace("unstable:", "");
+    if (message.length() > 20) return message.substring(0, 20);
+    return message;
+}
+
+bool callBridgeStep(const char* command, String& data) {
+    data = "";
+    Serial.print("[DEBUG] Bridge call -> ");
+    Serial.println(command);
+    bool ok = Bridge.call(command).result(data);
+    Serial.print("[DEBUG] Bridge response <- ");
+    Serial.println(data);
+    if (!ok) {
+        data = "fail:Bridge call failed";
+        Serial.println("[DEBUG] Bridge call transport failed");
+        return false;
+    }
+    return data.startsWith("success:");
+}
 
 void setup() {
-  Serial.begin(9600);
-  
-  // Initialize Stepper Pins
-  pinMode(X_STEP, OUTPUT);
-  pinMode(X_DIR, OUTPUT);
-  pinMode(Y_STEP, OUTPUT);
-  pinMode(Y_DIR, OUTPUT);
-  pinMode(Z_STEP, OUTPUT);
-  pinMode(Z_DIR, OUTPUT);
-  pinMode(ENABLE, OUTPUT);
-  digitalWrite(ENABLE, LOW);  // Enable drivers
-  
-  // Initialize Gripper
-  pinMode(Gripper, OUTPUT);
-  
-  // Initialize Buttons
-  pinMode(BUTTON_UP, INPUT_PULLUP);
-  pinMode(BUTTON_OK, INPUT_PULLUP);
-  pinMode(BUTTON_DOWN, INPUT_PULLUP);
-  
-  // Initialize LCD
-  lcd.begin(LCD_ROWS, LCD_COLUMNS);
-  lcd.cls();
-  
-  // Show initial menu
-  displayStartMenu();
-  
-  // Initialize Bridge
-  Bridge.begin();
-  Bridge.provide("set_gripper", set_gripper);
-  
-  Serial.println("Chess Robot System Initialized");
+    Serial.begin(115200);
+    pinMode(ENABLE, OUTPUT); digitalWrite(ENABLE, LOW);
+    pinMode(BUTTON_UP, INPUT_PULLUP); pinMode(BUTTON_OK, INPUT_PULLUP); pinMode(BUTTON_DOWN, INPUT_PULLUP);
+
+    gripperServo.attach(GRIPPER_PIN);
+    gripperServo.write(GRIPPER_CLOSED);
+
+    stepperX.setMaxSpeed(X_MAX_SPEED); stepperX.setAcceleration(X_ACCEL);
+    stepperY.setMaxSpeed(Y_MAX_SPEED); stepperY.setAcceleration(Y_ACCEL);
+    stepperZ.setMaxSpeed(Z_MAX_SPEED); stepperZ.setAcceleration(Z_ACCEL);
+
+    lcd.begin(4, 20);
+    lcd.cls();
+    Bridge.begin();
+    displaySetupCalibrate();
+    Serial.println("Chess Robot System Initialized");
 }
 
 void loop() {
-  // Maintain gripper position (non-blocking)
-  if (gripper_closed) {
-    gripper(GRIPPER_CLOSED);
-  } else {
-    gripper(GRIPPER_OPEN);
-  }
-  
-  // Read buttons (non-blocking debounce)
-  readButtons();
-  
-  // Handle menu state
-  switch (currentMenu) {
-    case MENU_START:
-      handleStartMenu();
-      break;
-      
-    case MENU_CONFIRM_START:
-      handleConfirmStartMenu();
-      break;
-      
-    case MENU_GAME:
-      handleGameScreen();
-      checkForResignHold();
-      break;
-      
-    case MENU_CONFIRM_RESIGN:
-      handleConfirmResignMenu();
-      break;
-  }
-  
-  // Update display if needed
-  if (millis() - lastDisplayUpdate >= DISPLAY_UPDATE_INTERVAL) {
-    updateDisplay();
-    lastDisplayUpdate = millis();
-  }
-}
+    readButtons();
 
-// ==================== GRIPPER FUNCTIONS ====================
-void gripper(int pulse) {
-  static unsigned long timer;
-  static int lastPulse;
-  if (pulse == 0) {
-    pulse = lastPulse;
-  } else {
-    lastPulse = pulse;
-  }
-  if (millis() > timer) {
-    digitalWrite(Gripper, HIGH);
-    delayMicroseconds(pulse);
-    digitalWrite(Gripper, LOW);
-    timer = millis() + SERVO_INTERVAL;
-  }
-}
-
-void CloseGripper() {
-  static unsigned long timer;
-  if (millis() > timer) {
-    gripper(GRIPPER_CLOSED);
-    timer = millis() + SERVO_INTERVAL;
-  }
-  gripper_closed = true;
-  Serial.println("Gripper close");
-}
-
-void OpenGripper() {
-  static unsigned long timer;
-  if (millis() > timer) {
-    gripper(GRIPPER_OPEN);
-    timer = millis() + SERVO_INTERVAL;
-  }
-  gripper_closed = false;
-  Serial.println("Gripper open");
-}
-
-void set_gripper(int state) {
-  if (state) {
-    CloseGripper();
-  } else {
-    OpenGripper();
-  }
-}
-
-// ==================== BUTTON READING ====================
-void readButtons() {
-  unsigned long currentTime = millis();
-  
-  // Read UP button
-  bool upReading = (digitalRead(BUTTON_UP) == LOW);
-  if (upReading != buttonUpLastState) {
-    buttonUpDebounceTime = currentTime;
-  }
-  if ((currentTime - buttonUpDebounceTime) > DEBOUNCE_DELAY) {
-    if (upReading != buttonUpState) {
-      buttonUpState = upReading;
+    switch (currentMenu) {
+        case MENU_SETUP_CALIBRATE: handleSetupCalibrate(); break;
+        case MENU_SETUP_VERIFY: handleSetupVerify(); break;
+        case MENU_SETUP_CAPTURE: handleSetupCapture(); break;
+        case MENU_START: handleStartMenu(); break;
+        case MENU_CONFIRM_START: handleConfirmStartMenu(); break;
+        case MENU_GAME: handleGameScreen(); checkForResignHold(); break;
+        case MENU_CONFIRM_RESIGN: handleConfirmResignMenu(); break;
     }
-  }
-  buttonUpLastState = upReading;
-  
-  // Read DOWN button
-  bool downReading = (digitalRead(BUTTON_DOWN) == LOW);
-  if (downReading != buttonDownLastState) {
-    buttonDownDebounceTime = currentTime;
-  }
-  if ((currentTime - buttonDownDebounceTime) > DEBOUNCE_DELAY) {
-    if (downReading != buttonDownState) {
-      buttonDownState = downReading;
+
+    if (gameActive && robotTurn) requestAndExecuteRobotMove();
+
+    if (millis() - lastDisplayUpdate >= DISPLAY_UPDATE_INTERVAL) {
+        updateDisplay();
+        lastDisplayUpdate = millis();
     }
-  }
-  buttonDownLastState = downReading;
-  
-  // Read OK button (with long press detection)
-  bool okReading = (digitalRead(BUTTON_OK) == LOW);
-  if (okReading != buttonOkLastState) {
-    buttonOkDebounceTime = currentTime;
-    if (okReading) {
-      buttonOkPressStart = currentTime;
+}
+
+void handleSetupCalibrate() {
+    if (buttonOkPressed()) {
+        String data;
+        bool success = callBridgeStep("camera_calibrate", data);
+        setStatusMessage(shortenMessage(data));
+        if (success) {
+            currentMenu = MENU_SETUP_VERIFY;
+            displaySetupVerify();
+        } else {
+            displaySetupCalibrate();
+        }
     }
-  }
-  if ((currentTime - buttonOkDebounceTime) > DEBOUNCE_DELAY) {
-    if (okReading != buttonOkState) {
-      buttonOkState = okReading;
+}
+
+void handleSetupVerify() {
+    if (buttonOkPressed()) {
+        String data;
+        bool success = callBridgeStep("camera_verify", data);
+        setStatusMessage(shortenMessage(data));
+        if (success) {
+            currentMenu = MENU_SETUP_CAPTURE;
+            displaySetupCapture();
+        } else {
+            displaySetupVerify();
+        }
     }
-  }
-  buttonOkLastState = okReading;
 }
 
-bool buttonUpPressed() {
-  static bool lastState = false;
-  if (buttonUpState && !lastState) {
-    lastState = true;
-    return true;
-  }
-  if (!buttonUpState) lastState = false;
-  return false;
+void handleSetupCapture() {
+    if (buttonOkPressed()) {
+        String data;
+        bool success = callBridgeStep("camera_capture_initial", data);
+        setStatusMessage(shortenMessage(data));
+        if (success) {
+            currentMenu = MENU_START;
+            displayStartMenu();
+        } else {
+            displaySetupCapture();
+        }
+    }
 }
 
-bool buttonDownPressed() {
-  static bool lastState = false;
-  if (buttonDownState && !lastState) {
-    lastState = true;
-    return true;
-  }
-  if (!buttonDownState) lastState = false;
-  return false;
-}
-
-bool buttonOkPressed() {
-  static bool lastState = false;
-  if (buttonOkState && !lastState) {
-    lastState = true;
-    return true;
-  }
-  if (!buttonOkState) lastState = false;
-  return false;
-}
-
-bool buttonOkLongPress() {
-  if (buttonOkState && (millis() - buttonOkPressStart >= LONG_PRESS_TIME)) {
-    buttonOkPressStart = millis() + 10000; // Prevent repeated triggers
-    return true;
-  }
-  return false;
-}
-
-// ==================== MENU HANDLERS ====================
 void handleStartMenu() {
-  if (buttonOkPressed()) {
-    currentMenu = MENU_CONFIRM_START;
-    menuSelection = 0;
-    displayConfirmStartMenu();
-    Serial.println("Moved to confirm start menu");
-  }
+    if (buttonOkPressed()) {
+        currentMenu = MENU_CONFIRM_START;
+        menuSelection = 0;
+        displayConfirmStartMenu();
+    }
 }
 
 void handleConfirmStartMenu() {
-  if (buttonUpPressed() || buttonDownPressed()) {
-    menuSelection = 1 - menuSelection; // Toggle between 0 and 1
-    displayConfirmStartMenu();
-  }
-  
-  if (buttonOkPressed()) {
-    if (menuSelection == 0) { // Yes
-      startGame();
-    } else { // No
-      currentMenu = MENU_START;
-      menuSelection = 0;
-      displayStartMenu();
-      Serial.println("Returned to start menu");
+    if (buttonUpPressed() || buttonDownPressed()) {
+        menuSelection = 1 - menuSelection;
+        displayConfirmStartMenu();
     }
-  }
+    if (buttonOkPressed()) {
+        if (menuSelection == 0) {
+            startGame();
+        } else {
+            currentMenu = MENU_START;
+            menuSelection = 0;
+            displayStartMenu();
+        }
+    }
 }
 
 void handleGameScreen() {
-  if (buttonOkPressed() && gameActive) {
-    // Player pressed OK - their move is complete
-    toggleTurn();
-    Serial.println("Turn toggled");
-  }
-  
-  // Check for time out
-  if (gameActive) {
-    if (getPlayerTime() == 0) {
-      Serial.println("Player time out - Robot wins!");
-      // You can add endGame() or other logic here
+    if (buttonOkPressed() && gameActive && !robotTurn) {
+        Serial.println("[DEBUG] Player requested move capture");
+        String data;
+        bool success = callBridgeStep("camera_capture_player_move", data);
+        if (success) {
+            setStatusMessage(String("Move ") + shortenMessage(data));
+            Serial.print("[DEBUG] Player move accepted: ");
+            Serial.println(data);
+            toggleTurn();
+            Bridge.call("log_event", "Player move captured. Robot turn.");
+        } else {
+            Serial.print("[DEBUG] Player move capture failed: ");
+            Serial.println(data);
+            setStatusMessage(shortenMessage(data));
+        }
     }
-    if (getRobotTime() == 0) {
-      Serial.println("Robot time out - Player wins!");
-      // You can add endGame() or other logic here
+
+    if (gameActive) {
+        if (getPlayerTime() == 0) Serial.println("Player time out - Robot wins!");
+        if (getRobotTime() == 0) Serial.println("Robot time out - Player wins!");
     }
-  }
-  
-  // Update timers
-  updateTimers();
+
+    updateTimers();
 }
 
 void checkForResignHold() {
-  if (buttonOkLongPress() && gameActive) {
-    currentMenu = MENU_CONFIRM_RESIGN;
-    menuSelection = 0;
-    pauseTimers();
-    displayConfirmResignMenu();
-    Serial.println("Resign menu activated");
-  }
+    if (buttonDownLongPress() && gameActive) {
+        currentMenu = MENU_CONFIRM_RESIGN;
+        menuSelection = 0;
+        pauseTimers();
+        displayConfirmResignMenu();
+    }
 }
 
 void handleConfirmResignMenu() {
-  if (buttonUpPressed() || buttonDownPressed()) {
-    menuSelection = 1 - menuSelection; // Toggle between 0 and 1
-    displayConfirmResignMenu();
-  }
-  
-  if (buttonOkPressed()) {
-    if (menuSelection == 0) { // Yes - Resign
-      endGame();
-    } else { // No - Continue
-      currentMenu = MENU_GAME;
-      menuSelection = 0;
-      resumeTimers();
-      displayGameScreen();
-      Serial.println("Returned to game");
+    if (buttonUpPressed() || buttonDownPressed()) {
+        menuSelection = 1 - menuSelection;
+        displayConfirmResignMenu();
     }
-  }
+    if (buttonOkPressed()) {
+        if (menuSelection == 0) {
+            endGame();
+        } else {
+            currentMenu = MENU_GAME;
+            menuSelection = 0;
+            resumeTimers();
+            displayGameScreen();
+        }
+    }
 }
 
-// ==================== GAME LOGIC ====================
 void startGame() {
-  gameActive = true;
-  robotTurn = false; // Player starts
-  currentMenu = MENU_GAME;
-  
-  // Reset scores and timers
-  playerScore = 0;
-  robotScore = 0;
-  playerElapsedTime = 0;
-  robotElapsedTime = 0;
-  
-  // Start player timer
-  playerStartTime = millis();
-  robotStartTime = 0;
-  
-  // Reset moves
-  robotNextMove = "e2e4";
-  playerLastMove = "----";
-  
-  displayGameScreen();
-  Serial.println("Game started!");
+    Bridge.call("reset_game");
+
+    gameActive = true;
+    robotTurn = true;
+    currentMenu = MENU_GAME;
+    playerScore = 0;
+    robotScore = 0;
+    playerElapsedTime = 0;
+    robotElapsedTime = 0;
+    robotStartTime = millis();
+    playerStartTime = 0;
+    robotNextMove = "----";
+    statusMessage = "";
+    displayGameScreen();
+    Bridge.call("log_event", "Game started. Robot is White.");
 }
 
 void endGame() {
-  gameActive = false;
-  currentMenu = MENU_START;
-  menuSelection = 0;
-  displayStartMenu();
-  Serial.println("Game ended - Resigned");
+    gameActive = false;
+    currentMenu = MENU_START;
+    menuSelection = 0;
+    displayStartMenu();
+    Bridge.call("log_event", "Game resigned.");
 }
 
 void toggleTurn() {
-  unsigned long currentTime = millis();
-  
-  if (robotTurn) {
-    // Was robot's turn, now player's turn
-    robotTurn = false;
-    
-    // Stop robot timer
-    if (robotStartTime > 0) {
-      robotElapsedTime += (currentTime - robotStartTime);
+    unsigned long now = millis();
+    if (robotTurn) {
+        robotTurn = false;
+        if (robotStartTime > 0) robotElapsedTime += (now - robotStartTime);
+        playerStartTime = now;
+    } else {
+        robotTurn = true;
+        if (playerStartTime > 0) playerElapsedTime += (now - playerStartTime);
+        robotStartTime = now;
     }
-    
-    // Start player timer
-    playerStartTime = currentTime;
-    
-    Serial.println("Player's turn");
-    
-  } else {
-    // Was player's turn, now robot's turn
-    robotTurn = true;
-    
-    // Stop player timer
-    if (playerStartTime > 0) {
-      playerElapsedTime += (currentTime - playerStartTime);
+}
+
+void requestAndExecuteRobotMove() {
+    String data;
+    Serial.println("[DEBUG] Requesting robot move");
+    bool ok = Bridge.call("get_move").result(data);
+    Serial.print("[DEBUG] get_move returned: ");
+    Serial.println(data);
+    if (!ok) {
+        setStatusMessage("get_move transport fail");
+        Serial.println("[DEBUG] get_move transport failed");
+        Bridge.call("log_event", "Robot move request failed: transport error.");
+        return;
     }
-    
-    // Start robot timer
-    robotStartTime = currentTime;
-    
-    Serial.println("Robot's turn");
-  }
+    if (data.length() == 0) {
+        setStatusMessage("get_move empty");
+        Serial.println("[DEBUG] get_move returned empty payload");
+        Bridge.call("log_event", "Robot move request failed: empty payload.");
+        return;
+    }
+
+    char s1[5], s2[5];
+    int p1, p2;
+    int parsed = sscanf(data.c_str(), "%4[^,],%4[^,],%d,%d", s1, s2, &p1, &p2);
+    if (parsed != 4) {
+        setStatusMessage("bad get_move format");
+        Serial.print("[DEBUG] Failed to parse get_move payload, parsed fields=");
+        Serial.println(parsed);
+        Serial.print("[DEBUG] Raw get_move payload: ");
+        Serial.println(data);
+        Bridge.call("log_event", "Robot move request failed: malformed payload.");
+        return;
+    }
+
+    robotNextMove = String(s1) + String(s2);
+    Serial.print("[DEBUG] Executing robot move: ");
+    Serial.println(robotNextMove);
+    displayGameScreen();
+    executeUCIMove(s1, s2, p1, p2);
+
+    String refreshData;
+    bool refreshSuccess = callBridgeStep("camera_refresh_reference", refreshData);
+    if (!refreshSuccess) {
+        setStatusMessage(shortenMessage(refreshData));
+        Serial.print("[DEBUG] Reference refresh failed: ");
+        Serial.println(refreshData);
+        Bridge.call("log_event", "Robot move complete, but reference refresh failed.");
+        return;
+    }
+
+    Serial.println("[DEBUG] Reference refresh succeeded");
+    toggleTurn();
+    Bridge.call("log_event", "Robot move complete. Player turn.");
+}
+
+void executeUCIMove(const char* sq1, const char* sq2, int p1, int p2) {
+    Pos t1, t2;
+    getSquarePos(sq1, t1);
+    getSquarePos(sq2, t2);
+
+    if (p2 != 0) {
+        moveXY(t2.x, t2.y); gripperServo.write(GRIPPER_OPEN); delay(800);
+        moveZ(pieces[p2].pickupHeight); gripperServo.write(GRIPPER_CLOSED); delay(800);
+        moveZ(0); moveXY(PIECE_PLACE.x, PIECE_PLACE.y); moveZ(pieces[p2].placeHeight);
+        gripperServo.write(GRIPPER_OPEN); delay(800); moveZ(0);
+    }
+
+    moveXY(t1.x, t1.y); gripperServo.write(GRIPPER_OPEN); delay(800);
+    moveZ(pieces[p1].pickupHeight); gripperServo.write(GRIPPER_CLOSED); delay(800);
+    moveZ(0); moveXY(t2.x, t2.y); moveZ(pieces[p1].placeHeight);
+    gripperServo.write(GRIPPER_OPEN); delay(800);
+    moveZ(0);
+    gripperServo.write(GRIPPER_CLOSED); delay(800);
+    moveToHome();
+}
+
+void moveXY(long x, long y) {
+    stepperX.moveTo(x);
+    stepperY.moveTo(y);
+    while (stepperX.distanceToGo() != 0 || stepperY.distanceToGo() != 0) {
+        stepperX.run();
+        stepperY.run();
+    }
+}
+
+void moveZ(long z) {
+    stepperZ.moveTo(z);
+    while (stepperZ.distanceToGo() != 0) stepperZ.run();
+}
+
+void moveToHome() {
+    // First move to safe position
+    moveXY(SAFE_POS.x, SAFE_POS.y);
+    // Then move to home
+    moveXY(HOME.x, HOME.y);
+}
+
+bool getSquarePos(const char* s, Pos& out) {
+    char f = (s[0] >= 'a') ? s[0] - 32 : s[0];
+    int r = s[1] - '1';
+    int c = f - 'A';
+    if (c < 0 || c > 7 || r < 0 || r > 7) return false;
+    out = squareTable[c][r];
+    return true;
 }
 
 void updateTimers() {
-  // Timers update automatically based on millis()
-  // No blocking code needed
 }
 
 void pauseTimers() {
-  unsigned long currentTime = millis();
-  
-  if (robotTurn && robotStartTime > 0) {
-    robotPauseTime = currentTime - robotStartTime;
-  } else if (!robotTurn && playerStartTime > 0) {
-    playerPauseTime = currentTime - playerStartTime;
-  }
+    unsigned long now = millis();
+    if (robotTurn && robotStartTime > 0) {
+        robotPauseTime = now - robotStartTime;
+    } else if (!robotTurn && playerStartTime > 0) {
+        playerPauseTime = now - playerStartTime;
+    }
 }
 
 void resumeTimers() {
-  unsigned long currentTime = millis();
-  
-  if (robotTurn) {
-    robotStartTime = currentTime - robotPauseTime;
-  } else {
-    playerStartTime = currentTime - playerPauseTime;
-  }
+    unsigned long now = millis();
+    if (robotTurn) {
+        robotStartTime = now - robotPauseTime;
+    } else {
+        playerStartTime = now - playerPauseTime;
+    }
 }
 
 unsigned long getPlayerTime() {
-  unsigned long elapsed;
-  if (gameActive && !robotTurn && playerStartTime > 0) {
-    elapsed = playerElapsedTime + (millis() - playerStartTime);
-  } else {
-    elapsed = playerElapsedTime;
-  }
-  
-  // Count down from STARTING_TIME
-  if (elapsed >= STARTING_TIME) {
-    return 0;  // Time's up
-  }
-  return STARTING_TIME - elapsed;
+    unsigned long elapsed;
+    if (gameActive && !robotTurn && playerStartTime > 0) elapsed = playerElapsedTime + (millis() - playerStartTime);
+    else elapsed = playerElapsedTime;
+    return (elapsed >= STARTING_TIME) ? 0 : STARTING_TIME - elapsed;
 }
 
 unsigned long getRobotTime() {
-  unsigned long elapsed;
-  if (gameActive && robotTurn && robotStartTime > 0) {
-    elapsed = robotElapsedTime + (millis() - robotStartTime);
-  } else {
-    elapsed = robotElapsedTime;
-  }
-  
-  // Count down from STARTING_TIME
-  if (elapsed >= STARTING_TIME) {
-    return 0;  // Time's up
-  }
-  return STARTING_TIME - elapsed;
+    unsigned long elapsed;
+    if (gameActive && robotTurn && robotStartTime > 0) elapsed = robotElapsedTime + (millis() - robotStartTime);
+    else elapsed = robotElapsedTime;
+    return (elapsed >= STARTING_TIME) ? 0 : STARTING_TIME - elapsed;
 }
 
-// ==================== DISPLAY FUNCTIONS ====================
+void readButtons() {
+    unsigned long currentTime = millis();
+
+    bool upReading = (digitalRead(BUTTON_UP) == LOW);
+    if (upReading != buttonUpLastState) buttonUpDebounceTime = currentTime;
+    if ((currentTime - buttonUpDebounceTime) > DEBOUNCE_DELAY && upReading != buttonUpState) buttonUpState = upReading;
+    buttonUpLastState = upReading;
+
+    bool downReading = (digitalRead(BUTTON_DOWN) == LOW);
+    if (downReading != buttonDownLastState) {
+        buttonDownDebounceTime = currentTime;
+        if (downReading) buttonDownPressStart = currentTime;
+    }
+    if ((currentTime - buttonDownDebounceTime) > DEBOUNCE_DELAY && downReading != buttonDownState) buttonDownState = downReading;
+    buttonDownLastState = downReading;
+
+    bool okReading = (digitalRead(BUTTON_OK) == LOW);
+    if (okReading != buttonOkLastState) {
+        buttonOkDebounceTime = currentTime;
+        if (okReading) buttonOkPressStart = currentTime;
+    }
+    if ((currentTime - buttonOkDebounceTime) > DEBOUNCE_DELAY && okReading != buttonOkState) buttonOkState = okReading;
+    buttonOkLastState = okReading;
+}
+
+bool buttonUpPressed() {
+    static bool lastState = false;
+    if (buttonUpState && !lastState) {
+        lastState = true;
+        return true;
+    }
+    if (!buttonUpState) lastState = false;
+    return false;
+}
+
+bool buttonDownPressed() {
+    static bool lastState = false;
+    if (buttonDownState && !lastState) {
+        lastState = true;
+        return true;
+    }
+    if (!buttonDownState) lastState = false;
+    return false;
+}
+
+bool buttonDownLongPress() {
+    if (buttonDownState && (millis() - buttonDownPressStart >= LONG_PRESS_TIME)) {
+        buttonDownPressStart = millis() + 10000;
+        return true;
+    }
+    return false;
+}
+
+bool buttonOkPressed() {
+    static bool lastState = false;
+    if (buttonOkState && !lastState) {
+        lastState = true;
+        return true;
+    }
+    if (!buttonOkState) lastState = false;
+    return false;
+}
+
+bool buttonOkLongPress() {
+    if (buttonOkState && (millis() - buttonOkPressStart >= LONG_PRESS_TIME)) {
+        buttonOkPressStart = millis() + 10000;
+        return true;
+    }
+    return false;
+}
+
+void displaySetupCalibrate() {
+    lcd.cls();
+    lcd.locate(1, 1); lcd.printf(" Camera Setup");
+    lcd.locate(2, 1); lcd.printf("Empty board");
+    lcd.locate(3, 1); lcd.printf("OK = calibrate");
+    lcd.locate(4, 1); lcd.printf("%-20s", shortenMessage(statusMessage).c_str());
+}
+
+void displaySetupVerify() {
+    lcd.cls();
+    lcd.locate(1, 1); lcd.printf(" Verify Camera");
+    lcd.locate(2, 1); lcd.printf("Check live view");
+    lcd.locate(3, 1); lcd.printf("OK = verify");
+    lcd.locate(4, 1); lcd.printf("%-20s", shortenMessage(statusMessage).c_str());
+}
+
+void displaySetupCapture() {
+    lcd.cls();
+    lcd.locate(1, 1); lcd.printf(" Initial Board");
+    lcd.locate(2, 1); lcd.printf("Place pieces");
+    lcd.locate(3, 1); lcd.printf("OK = capture");
+    lcd.locate(4, 1); lcd.printf("%-20s", shortenMessage(statusMessage).c_str());
+}
+
 void displayStartMenu() {
-  lcd.cls();
-  lcd.locate(2, 1);
-  lcd.printf("   > Start Game <");
-  lcd.locate(3, 1);
-  lcd.printf("  Press OK to begin");
+    lcd.cls();
+    lcd.locate(1, 1); lcd.printf(" Setup complete");
+    lcd.locate(2, 1); lcd.printf(" > Start Game <");
+    lcd.locate(3, 1); lcd.printf(" Press OK");
+    lcd.locate(4, 1); lcd.printf("%-20s", shortenMessage(statusMessage).c_str());
 }
 
 void displayConfirmStartMenu() {
-  lcd.cls();
-  lcd.locate(1, 1);
-  lcd.printf("  Start the game?");
-  
-  lcd.locate(3, 1);
-  if (menuSelection == 0) {
-    lcd.printf("      > Yes <");
-  } else {
-    lcd.printf("        Yes");
-  }
-  
-  lcd.locate(4, 1);
-  if (menuSelection == 1) {
-    lcd.printf("      > No <");
-  } else {
-    lcd.printf("        No");
-  }
-}
-
-void displayGameScreen() {
-  lcd.cls();
-  
-  // Line 1: Turn indicator and next move
-  lcd.locate(1, 1);
-  if (robotTurn) {
-    lcd.printf("Robot");
-  } else {
-    lcd.printf("You  ");
-  }
-  lcd.locate(1, 7);
-  lcd.printf("%-4s", robotNextMove.c_str());
-  lcd.locate(1, 15);
-  lcd.printf("Robot");
-  
-  // Line 2: Timers (left-aligned for player, right-aligned for robot)
-  lcd.locate(2, 1);
-  formatTime(getPlayerTime());
-  lcd.locate(2, 15);
-  formatTime(getRobotTime());
-  
-  // Line 3: Scores and turn indicator
-  lcd.locate(3, 1);
-  lcd.printf("+%-2d", playerScore);
-  lcd.locate(3, 7);
-  if (robotTurn) {
-    lcd.printf("Robot");
-  } else {
-    lcd.printf("Your ");
-  }
-  lcd.locate(3, 18);
-  lcd.printf("+%-2d", robotScore);
-  
-  // Line 4: Difficulty and resign
-  lcd.locate(4, 1);
-  lcd.printf("STOCKFISH");
-  lcd.locate(4,15);
-  lcd.printf("resign");
+    lcd.cls();
+    lcd.locate(1, 1); lcd.printf(" Start the game?");
+    lcd.locate(3, 1); lcd.printf(menuSelection == 0 ? "      > Yes <" : "        Yes");
+    lcd.locate(4, 1); lcd.printf(menuSelection == 1 ? "      > No <" : "        No");
 }
 
 void displayConfirmResignMenu() {
-  lcd.cls();
-  lcd.locate(1, 1);
-  lcd.printf("    Resign game?");
-  
-  lcd.locate(3, 1);
-  if (menuSelection == 0) {
-    lcd.printf("      > Yes <");
-  } else {
-    lcd.printf("        Yes");
-  }
-  
-  lcd.locate(4, 1);
-  if (menuSelection == 1) {
-    lcd.printf("      > No <");
-  } else {
-    lcd.printf("        No");
-  }
+    lcd.cls();
+    lcd.locate(1, 1); lcd.printf("   Resign game?");
+    lcd.locate(3, 1); lcd.printf(menuSelection == 0 ? "      > Yes <" : "        Yes");
+    lcd.locate(4, 1); lcd.printf(menuSelection == 1 ? "      > No <" : "        No");
+}
+
+void displayGameScreen() {
+    lcd.cls();
+    lcd.locate(1, 1); lcd.printf("You  ");
+    lcd.locate(1, 9); lcd.printf("%-4s", robotNextMove.c_str());
+    lcd.locate(1, 16); lcd.printf("Robot");
+
+    lcd.locate(2, 1); formatTime(getPlayerTime());
+    lcd.locate(2, 16); formatTime(getRobotTime());
+
+    lcd.locate(3, 1); lcd.printf("+%-2d", playerScore);
+    lcd.locate(3, 18); lcd.printf("+%-2d", robotScore);
+
+    lcd.locate(4, 1);
+    if (statusMessage.length() > 0 && millis() < statusMessageUntil) lcd.printf("%-20s", shortenMessage(statusMessage).c_str());
+    else lcd.printf("STOCKFISH     resign  ");
 }
 
 void updateDisplay() {
-  if (currentMenu == MENU_GAME && gameActive) {
-    // Update timers without clearing screen
-    lcd.locate(2, 1);
-    formatTime(getPlayerTime());
-    
-    lcd.locate(2, 15);
-    formatTime(getRobotTime());
-    
-    // Update turn indicator on line 1
-    lcd.locate(1, 1);
-    if (robotTurn) {
-      lcd.printf("Robot");
-    } else {
-      lcd.printf("You  ");
+    if (currentMenu == MENU_GAME && gameActive) {
+        lcd.locate(2, 1); formatTime(getPlayerTime());
+        lcd.locate(2, 16); formatTime(getRobotTime());
+        lcd.locate(3, 6); lcd.printf(robotTurn ? "Robot move" : "Your move ");
+        lcd.locate(4, 1);
+        if (statusMessage.length() > 0 && millis() < statusMessageUntil) lcd.printf("%-20s", shortenMessage(statusMessage).c_str());
+        else lcd.printf("STOCKFISH     resign  ");
     }
-    
-    // Update turn indicator on line 3
-    lcd.locate(3, 7);
-    if (robotTurn) {
-      lcd.printf("Robot move");
-    } else {
-      lcd.printf("Your move");
-    }
-  }
 }
 
 void formatTime(unsigned long milliseconds) {
-  unsigned long totalSeconds = milliseconds / 1000;
-  unsigned long minutes = totalSeconds / 60;
-  unsigned long seconds = totalSeconds % 60;
-  
-  // Format as MM:SS (exactly 5 characters)
-  lcd.printf("%02lu:%02lu", minutes, seconds);
+    unsigned long totalSeconds = milliseconds / 1000;
+    unsigned long minutes = totalSeconds / 60;
+    unsigned long seconds = totalSeconds % 60;
+    lcd.printf("%02lu:%02lu", minutes, seconds);
 }
