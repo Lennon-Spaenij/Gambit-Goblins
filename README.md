@@ -85,6 +85,13 @@ The Arduino and Python sides communicate over the **Arduino RouterBridge** (`Bri
 
 ---
 
+## Scalability
+
+The vision code is shaped in a way that it is compatible with different camera's and different types of robot arms.
+You only need to adhere to the bridging logic or small tweaks are needed to suit your needs.
+
+---
+
 ## Team
 
 **The Gambit Goblins** : Engineered by the best goblins NHL-Stenden has.
